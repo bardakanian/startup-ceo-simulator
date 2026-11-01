@@ -8,3 +8,6 @@ build/
 dist/
 *.egg-info/
 work/
+
+# Local notes for Claude Code
+CLAUDE.md
