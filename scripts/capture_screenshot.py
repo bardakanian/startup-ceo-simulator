@@ -23,7 +23,8 @@ def main() -> int:
     window = MainWindow()
     window.resize(1440, 940)
     latest_result = None
-    for quarter in range(4):
+    # Stop before Q4 so the preview shows the board decision scheduled for scenario 2027.
+    for quarter in range(3):
         latest_result = window.engine.advance(
             Decision(
                 price=79 + quarter * 3,

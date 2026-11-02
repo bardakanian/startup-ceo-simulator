@@ -9,7 +9,7 @@ from pathlib import Path
 from PySide6.QtCore import QMarginsF
 from PySide6.QtGui import QGuiApplication, QPageLayout, QPageSize, QPdfWriter, QTextDocument
 
-from .engine import money
+from .formatting import money
 from .models import GameState
 
 
@@ -18,6 +18,7 @@ class BoardReport:
     best_quarter: str
     decisions: tuple[str, ...]
     assessment: str
+    board_decisions: tuple[str, ...] = ()
 
 
 def build_board_report(state: GameState) -> BoardReport:
@@ -26,15 +27,20 @@ def build_board_report(state: GameState) -> BoardReport:
     funding = sum(record.decision.raise_funding for record in state.decision_history)
     total_hires = sum(record.decision.hires for record in state.decision_history)
     total_layoffs = sum(record.decision.layoffs for record in state.decision_history)
+    acquired = sum(record.acquired_employees for record in state.decision_history)
     avg_product = (
         sum(record.decision.product for record in state.decision_history) / len(state.decision_history)
         if state.decision_history else 0
     )
     decisions = (
         f"Completed {state.quarter} quarters with {funding} funding round(s).",
-        f"Hired {total_hires} and laid off {total_layoffs} employees.",
+        f"Hired {total_hires} and laid off {total_layoffs} employees"
+        + (f", and added {acquired} through acquisitions." if acquired else "."),
         f"Average quarterly product investment was {money(avg_product)}.",
     )
+    peak_load = max((result.support_load for result in state.history), default=0)
+    if peak_load > 1:
+        decisions += (f"Support peaked at {peak_load:.0%} of team capacity, which raised churn.",)
     wins = sum(state.objective_progress.values())
     if state.bankrupt:
         assessment = "Growth spending outpaced available capital. Improve runway discipline and stage investments against measurable demand."
@@ -44,7 +50,11 @@ def build_board_report(state: GameState) -> BoardReport:
         assessment = "The company preserved liquidity, but one or more growth or ownership goals remain. Focus capital on the highest-return operating lever."
     else:
         assessment = "The company created operating momentum but finished under cash pressure. Reduce fixed commitments or secure capital earlier."
-    return BoardReport(best_quarter, decisions, assessment)
+    board_decisions = tuple(
+        f"Q{record.quarter} - {record.dilemma}: {record.response}"
+        for record in state.decision_history if record.dilemma
+    )
+    return BoardReport(best_quarter, decisions, assessment, board_decisions)
 
 
 def report_html(state: GameState) -> str:
@@ -54,25 +64,53 @@ def report_html(state: GameState) -> str:
         for name, achieved in state.objective_progress.items()
     )
     decisions = "".join(f"<li>{escape(item)}</li>" for item in report.decisions)
+    board_decisions = "".join(f"<li>{escape(item)}</li>" for item in report.board_decisions) or "<li>No board dilemmas were reached.</li>"
+    breakdown = "".join(
+        f"<tr><td>{escape(name)}</td><td align='right'>{points:.1f}</td></tr>"
+        for name, points in state.score_breakdown().items()
+    )
+    quarters = "".join(
+        f"<tr><td>Q{result.quarter}</td><td>{escape(result.event.name)}</td><td align='right'>{money(result.revenue)}</td>"
+        f"<td align='right'>{money(result.operating_profit)}</td><td align='right'>{result.customers:,}</td>"
+        f"<td align='right'>{money(result.ending_cash)}</td></tr>"
+        for result in state.history
+    )
+    record = state.decision_history
+    choices = "".join(
+        f"<tr><td>Q{item.quarter}</td><td align='right'>${item.decision.price}</td><td align='right'>{money(item.decision.marketing)}</td>"
+        f"<td align='right'>{money(item.decision.product)}</td><td align='right'>{item.decision.hires - item.decision.layoffs + item.acquired_employees:+d}</td>"
+        f"<td align='center'>{'Yes' if item.decision.raise_funding else ''}</td></tr>"
+        for item in record
+    )
     return f"""
     <style>
       body {{ font-family: sans-serif; color: #172033; line-height: 1.45; }}
       h1 {{ color: #123047; font-size: 26px; }} h2 {{ color: #137F78; font-size: 16px; margin-top: 24px; }}
       table {{ width: 100%; border-collapse: collapse; }} td {{ padding: 8px; border-bottom: 1px solid #DDE5EA; }}
+      th {{ padding: 6px 8px; text-align: left; color: #52687A; border-bottom: 1px solid #B9C7D1; }}
+      table.compact td {{ padding: 4px 8px; }}
     </style>
     <h1>{escape(state.company_name)} - Final Board Report</h1>
-    <p>Startup CEO Simulator - End of Q{state.quarter}</p>
+    <p>Startup CEO Simulator - End of Q{state.quarter}{' (company failed)' if state.bankrupt else ''}</p>
     <h2>CEO Score: {state.score()} / 100</h2>
     <table>
       <tr><td>Final valuation</td><td><b>{money(state.valuation)}</b></td></tr>
       <tr><td>Ending cash</td><td><b>{money(state.cash)}</b></td></tr>
       <tr><td>Customers</td><td><b>{state.customers:,}</b></td></tr>
       <tr><td>Founder ownership</td><td><b>{state.founder_ownership:.1f}%</b></td></tr>
+      <tr><td>Founder stake value</td><td><b>{money(state.founder_stake)}</b></td></tr>
       <tr><td>Best-performing quarter</td><td><b>{escape(report.best_quarter)}</b></td></tr>
     </table>
     <h2>Board objectives</h2><ul>{objectives}</ul>
     <h2>Major strategic decisions</h2><ul>{decisions}</ul>
+    <h2>Board dilemmas</h2><ul>{board_decisions}</ul>
     <h2>Board assessment</h2><p>{escape(report.assessment)}</p>
+    <h2>Score breakdown</h2>
+    <table class="compact">{breakdown}<tr><td><b>CEO score</b></td><td align='right'><b>{state.score()}</b></td></tr></table>
+    <h2>Quarter-by-quarter results</h2>
+    <table class="compact"><tr><th>Quarter</th><th>Market</th><th>Revenue</th><th>Op. profit</th><th>Customers</th><th>Cash</th></tr>{quarters}</table>
+    <h2>Decision log</h2>
+    <table class="compact"><tr><th>Quarter</th><th>Price</th><th>Marketing</th><th>Product</th><th>Headcount</th><th>Funding</th></tr>{choices}</table>
     """
 
 

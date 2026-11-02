@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-from dataclasses import asdict
+from dataclasses import asdict, fields
 import json
+import math
 from pathlib import Path
 from typing import Any
 
@@ -73,7 +74,10 @@ def _state_from_dict(data: dict[str, Any]) -> GameState:
             DecisionRecord(
                 quarter=_integer(item.get("quarter"), "decision quarter"),
                 decision=Decision(**decision_data),
-                event_name=str(item.get("event_name", "")),
+                event_name=item.get("event_name", ""),
+                dilemma=item.get("dilemma", ""),
+                response=item.get("response", ""),
+                acquired_employees=item.get("acquired_employees", 0),
             )
         )
     scalar_data = {key: value for key, value in data.items() if key not in {"history", "decision_history"}}
@@ -81,6 +85,7 @@ def _state_from_dict(data: dict[str, Any]) -> GameState:
 
 
 def _validate_state(state: GameState) -> None:
+    _check_types(state, "company")
     if not state.company_name.strip() or len(state.company_name) > 80:
         raise ValueError("invalid company name")
     if not 0 <= state.quarter <= state.max_quarters <= 40:
@@ -95,6 +100,42 @@ def _validate_state(state: GameState) -> None:
         raise ValueError("invalid founder ownership")
     if any(record.quarter != index for index, record in enumerate(state.decision_history, 1)):
         raise ValueError("decision history is out of order")
+    if state.market_size <= 0:
+        raise ValueError("invalid market size")
+    for result in state.history:
+        _check_types(result, "quarter result")
+        _check_types(result.event, "market event")
+        if not isinstance(result.costs, dict) or not all(
+            isinstance(name, str) and _is_number(value) for name, value in result.costs.items()
+        ):
+            raise ValueError("invalid quarterly cost breakdown")
+    for record in state.decision_history:
+        _check_types(record, "decision record")
+        _check_types(record.decision, "decision")
+        record.decision.validate()
+
+
+def _check_types(item: Any, label: str) -> None:
+    """Check scalar fields against their annotations so bad values are rejected here, not in the UI."""
+    for spec in fields(item):
+        value = getattr(item, spec.name)
+        expected = spec.type
+        if expected == "float":
+            valid = _is_number(value)
+        elif expected == "int":
+            valid = isinstance(value, int) and not isinstance(value, bool)
+        elif expected == "bool":
+            valid = isinstance(value, bool)
+        elif expected == "str":
+            valid = isinstance(value, str)
+        else:
+            continue
+        if not valid:
+            raise TypeError(f"{label} field '{spec.name}' has an invalid value")
+
+
+def _is_number(value: Any) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
 
 
 def _mapping(value: Any, label: str) -> dict[str, Any]:
