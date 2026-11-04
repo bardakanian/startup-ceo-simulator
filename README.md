@@ -113,22 +113,13 @@ QT_QPA_PLATFORM=offscreen python scripts/capture_screenshot.py
 
 The generated image is written to `work/dashboard-preview.png` and is intentionally ignored by Git.
 
-Render a captioned 1080×1080 demo video of a scripted playthrough (requires `ffmpeg`):
-
-```bash
-QT_QPA_PLATFORM=offscreen python scripts/make_demo_video.py
-```
-
-The video is written to `work/startup-ceo-demo-linkedin.mp4`. The copy shown at the top of this README lives in `docs/media/`, with a GIF preview made from it.
-
 ## Project structure
 
 ```text
 .
 ├── main.py                         # Application entry point
 ├── scripts/
-│   ├── capture_screenshot.py       # Deterministic visual-QA helper
-│   └── make_demo_video.py          # Captioned demo video of a scripted playthrough
+│   └── capture_screenshot.py       # Deterministic visual-QA helper
 ├── src/startup_ceo/
 │   ├── app.py                      # Strategy Canvas and interaction flow
 │   ├── dilemmas.py                 # Board dilemmas and their seeded schedule

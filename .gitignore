@@ -11,3 +11,6 @@ work/
 
 # Local notes for Claude Code
 CLAUDE.md
+
+# Local-only demo video generator
+scripts/make_demo_video.py
