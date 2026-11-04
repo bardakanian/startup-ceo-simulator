@@ -31,7 +31,7 @@ The primary screen places controllable management choices beside estimated busin
 - Use a scenario code so every team in a class faces the same market, and open the in-app **Guide** for the rules and scoring.
 - Keyboard shortcuts: Ctrl+Enter commits the quarter, Ctrl+N/S/O start, save, and open (⌘ on macOS).
 
-Directional previews are explicitly estimates. Actual results reflect the selected strategy, company health, and the quarter's market condition.
+Previews are explicitly estimates. They play the upcoming quarter with the same rules and the announced market condition, but assume average demand, so actual results can differ by the quarter's random variation.
 
 ## Board objectives
 
@@ -63,7 +63,8 @@ The report can be exported as a professionally formatted PDF.
 |---|---|
 | Unit economics | Price, variable cost, acquisition investment, and churn jointly affect profit |
 | Capital allocation | Cash is distributed among product, marketing, talent, and runway protection |
-| Price elasticity | Premium pricing raises revenue per customer while pressuring demand and retention |
+| Price elasticity | Premium pricing raises revenue per customer while pressuring demand and retention; raising the price on existing customers pushes some of them to leave |
+| Retention and valuation | The revenue multiple falls when quarterly churn rises above a healthy 3%, and only organic growth (not acquired customers) lifts it, so squeezing customers before the board meeting backfires |
 | Differentiation and pricing power | Higher product quality makes buyers less price-sensitive and softens premium-price churn |
 | Diminishing returns | Marketing generates leads through a square-root response curve; product investment lifts quality along a square-root curve |
 | Market saturation | Acquisition slows as the company captures more of a growing addressable market |
@@ -142,11 +143,11 @@ Each quarter applies the upcoming seeded market event and grows the addressable 
 
 Board dilemmas are scheduled from the scenario code: four distinct dilemmas, drawn from a pool of nine, land between Q2 and Q12. A chosen response takes effect at the start of its quarter and can change cash, operating expenses, customers, headcount, quality, brand, morale, founder ownership, demand, revenue, revenue share, and churn for that quarter. Options that need more cash than the company holds cannot be chosen, unless a funding round raised in the same quarter covers the cost.
 
-Churn depends on quality, morale, premium pricing, and support load: when customers exceed what the team can support (300 per employee), churn rises and quality and morale fall. The engine then recognizes quarterly subscription revenue, deducts variable costs, payroll, marketing, product, overhead, and hiring or severance costs, updates company health and cash, and estimates valuation from annualized revenue, growth, margin, quality, and liquidity. The company fails if cash falls below -$250K.
+Churn depends on quality, morale, premium pricing, price increases (raising the price by a quarter adds about 6 points of churn that quarter), and support load: when customers exceed what the team can support (300 per employee), churn rises and quality and morale fall. The engine then recognizes quarterly subscription revenue, deducts variable costs, payroll, marketing, product, overhead, and hiring or severance costs, updates company health and cash, and estimates valuation from annualized revenue, organic growth, margin, quality, churn, and liquidity. Funding rounds and one-off board deals move cash outside operating profit, and the income statement lists them under a change-in-cash line. The company fails if cash falls below -$250K.
 
 The CEO score (0 to 100) combines the founder's stake value (valuation × ownership, 35 points), compound customer growth (20), cash on hand (10, full marks at $1M so a late funding round is not a shortcut), product quality and morale (15), the board objectives (5 each), and finishing the last quarter profitable (5).
 
-Using the same scenario code and decisions produces the same results, enabling fair classroom comparisons between growth-first, capital-efficient, and product-led strategies. In balance testing across 20 scenarios, well-run growth-led, premium product-led, and balanced plans score roughly 80 to 94, a hands-off default plan scores in the high 60s, raising money every quarter scores about 50, and doing nothing fails. Within each board dilemma, the defensible responses land within a few points of each other, while cutting corners (such as patching a breach quietly) costs points.
+Using the same scenario code and decisions produces the same results, enabling fair classroom comparisons between growth-first, capital-efficient, and product-led strategies. In balance testing across 20 scenarios, well-run growth-led, premium product-led, and balanced plans score roughly 80 to 92, a hands-off default plan scores in the mid 60s, raising money every quarter scores about 50, and doing nothing fails. Within each board dilemma, the defensible responses land within a few points of each other, while cutting corners (such as patching a breach quietly or hiking the price in the final quarter) costs points.
 
 ## Privacy and offline operation
 

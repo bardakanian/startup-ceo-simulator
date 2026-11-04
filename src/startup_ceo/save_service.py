@@ -8,7 +8,7 @@ import math
 from pathlib import Path
 from typing import Any
 
-from .models import Decision, DecisionRecord, GameState, MarketEvent, QuarterResult
+from .models import MIN_EMPLOYEES, Decision, DecisionRecord, GameState, MarketEvent, QuarterResult
 
 
 SAVE_VERSION = 1
@@ -92,7 +92,7 @@ def _validate_state(state: GameState) -> None:
         raise ValueError("invalid quarter")
     if len(state.history) != state.quarter or len(state.decision_history) != state.quarter:
         raise ValueError("history does not match the current quarter")
-    if state.customers < 0 or state.employees < 1:
+    if state.customers < 0 or state.employees < MIN_EMPLOYEES:
         raise ValueError("invalid company totals")
     if not 0 <= state.product_quality <= 100 or not 0 <= state.morale <= 100:
         raise ValueError("invalid quality or morale")

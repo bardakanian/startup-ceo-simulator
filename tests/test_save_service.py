@@ -63,7 +63,7 @@ class SaveServiceTests(unittest.TestCase):
             payload = json.loads(path.read_text(encoding="utf-8"))
             del payload["state"]["market_size"]
             for item in payload["state"]["history"]:
-                del item["costs"], item["support_load"], item["event"]["market_growth"]
+                del item["costs"], item["support_load"], item["acquired_customers"], item["event"]["market_growth"]
             path.write_text(json.dumps(payload), encoding="utf-8")
             state, seed = load_game(path)
         self.assertEqual(seed, 55)
@@ -104,6 +104,7 @@ class SaveServiceTests(unittest.TestCase):
             lambda state: state["decision_history"][0]["decision"].update(price=5),
             lambda state: state["decision_history"][0]["decision"].update(hires="x"),
             lambda state: state["decision_history"][0].update(response=7),
+            lambda state: state.update(employees=2),
         )
         with TemporaryDirectory() as directory:
             path = Path(directory) / "session.json"

@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import math
+import re
 import sys
 
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QCloseEvent, QFont, QKeySequence, QShortcut
+from PySide6.QtGui import QCloseEvent, QFont, QKeySequence, QResizeEvent, QShortcut
 from PySide6.QtWidgets import (
     QApplication, QButtonGroup, QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFileDialog, QFrame,
     QGridLayout, QHBoxLayout, QLabel, QLineEdit, QMainWindow, QMessageBox, QPushButton,
@@ -84,8 +85,9 @@ always produce the same outcome.</p>
 <h3>Your levers</h3>
 <ul>
 <li><b>Price</b> raises revenue per customer but slows sign-ups. A stronger product makes buyers less price-sensitive,
-and prices above $99 add churn unless quality is high.</li>
-<li><b>Marketing</b> brings leads with diminishing returns, and it gets weaker as you win more of the market.</li>
+and prices above $99 add churn unless quality is high. Raising the price on existing customers also makes some of them leave.</li>
+<li><b>Marketing</b> brings leads with diminishing returns, and it gets weaker as you win more of the market.
+It also builds <b>brand</b>, which raises the share of leads who sign up; brand fades slowly without marketing.</li>
 <li><b>Product investment</b> lifts quality with diminishing returns. Quality improves conversion and retention and earns pricing power.</li>
 <li><b>Hiring</b> adds support capacity (300 customers per employee) but adds payroll. When customers outgrow the team,
 churn rises and quality and morale fall. The team can't shrink below three people. Hiring and layoffs are one-time actions and reset after each quarter.</li>
@@ -99,9 +101,18 @@ at the start of the quarter, alongside your regular plan. Teams with the same sc
 <h3>Scoring</h3>
 <p>The CEO score (0 to 100) rewards the value of the founder's stake (valuation × ownership), compound customer growth,
 cash on hand, product quality and morale, the three board objectives, and finishing profitable.
+Investors pay less for revenue that is churning away, so high churn lowers the valuation.
 The company fails if cash falls below -$250K.</p>
 <p><b>Shortcuts</b> (⌘ on macOS)<b>:</b> Ctrl+Enter commits the quarter, Ctrl+N starts a new game, Ctrl+S saves, Ctrl+O opens.</p>
 """
+
+NARROW_WINDOW = 1250
+
+
+def file_stem(name: str) -> str:
+    """A file-name-safe version of the company name for suggested save and report names."""
+    stem = re.sub(r"[^\w.-]+", "-", name).strip("-.")
+    return stem or "simulation"
 
 CHART_METRICS = {
     "Cash": ("ending_cash", money),
@@ -187,7 +198,7 @@ class FinalReportDialog(QDialog):
         layout.addWidget(buttons)
 
     def _export(self) -> None:
-        suggested = f"{self.state.company_name.replace(' ', '-')}-board-report.pdf"
+        suggested = f"{file_stem(self.state.company_name)}-board-report.pdf"
         path, _ = QFileDialog.getSaveFileName(self, "Export board report", suggested, "PDF files (*.pdf)")
         if not path:
             return
@@ -251,6 +262,9 @@ class MainWindow(QMainWindow):
         brand.setObjectName("brand")
         self.company_label = QLabel("Northstar Labs")
         self.company_label.setObjectName("company")
+        # The name is user input: show it literally, and let a long one be clipped rather than widen the window.
+        self.company_label.setTextFormat(Qt.TextFormat.PlainText)
+        self.company_label.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         self.quarter_label = QLabel("QUARTER 0 / 12")
         self.quarter_label.setObjectName("quarter")
         self.score_label = QLabel("CEO SCORE  0")
@@ -268,8 +282,7 @@ class MainWindow(QMainWindow):
             button.clicked.connect(slot)
             buttons.append(button)
         layout.addWidget(brand)
-        layout.addWidget(self.company_label)
-        layout.addStretch()
+        layout.addWidget(self.company_label, 1)
         layout.addWidget(self.quarter_label)
         layout.addWidget(self.score_label)
         for button in buttons:
@@ -320,6 +333,7 @@ class MainWindow(QMainWindow):
 
         connector = QWidget()
         connector.setFixedWidth(105)
+        self.connector = connector
         connector_layout = QVBoxLayout(connector)
         connector_layout.addStretch()
         for text, name in (("MANAGEMENT\nCHOICES", "eyebrow"), ("→", "canvasArrow"), ("BUSINESS\nEFFECTS", "eyebrow")):
@@ -552,6 +566,9 @@ class MainWindow(QMainWindow):
 
     def _update_previews(self) -> None:
         state = self.engine.state
+        if state.complete:
+            self._show_finished_previews()
+            return
         self._update_dilemma_availability()
         decision = self._decision()
         try:
@@ -571,20 +588,27 @@ class MainWindow(QMainWindow):
             f"(ownership {state.founder_ownership:.1f}% → {state.founder_ownership * (1 - dilution / 100):.1f}%)."
         )
         warnings = []
-        if not state.complete and runway < 6 and not decision.raise_funding:
+        if runway < 6 and decision.raise_funding:
+            warnings.append(f"Even with the funding round, runway is only about {runway:.1f} months. The company fails below -$250K cash; cut spending too.")
+        elif runway < 6:
             warnings.append(f"Runway is about {runway:.1f} months. The company fails below -$250K cash; cut spending or raise funding.")
-        if not state.complete and previews["Service capacity"] == "Under pressure":
+        if previews["Service capacity"] == "Under pressure":
             warnings.append("Customers are outgrowing the team. Without hiring, churn will rise and morale will fall.")
         self.alert.setText("⚠  " + "  ".join(warnings) if warnings else "")
         self.alert.setVisible(bool(warnings))
         awaiting_response = self.engine.upcoming_dilemma() is not None and not decision.dilemma_choice
-        self.advance_button.setEnabled(not state.complete and not awaiting_response)
-        if state.complete:
-            self.advance_button.setText("Simulation Complete")
-        elif awaiting_response:
-            self.advance_button.setText("Choose a Board Response First")
-        else:
-            self.advance_button.setText("Commit Strategy and Advance Quarter  →")
+        self.advance_button.setEnabled(not awaiting_response)
+        self.advance_button.setText("Choose a Board Response First" if awaiting_response else "Commit Strategy and Advance Quarter  →")
+
+    def _show_finished_previews(self) -> None:
+        """Once the game is over there is no next quarter, so forward-looking estimates are cleared."""
+        for row in self.effects.values():
+            row.set_value("—")
+        self.cards["Runway"].set_value("—", "Simulation complete")
+        self.funding_note.setText("The simulation is complete; no further rounds can be raised.")
+        self.alert.hide()
+        self.advance_button.setEnabled(False)
+        self.advance_button.setText("Simulation Complete")
 
     def _update_chart(self) -> None:
         state = self.engine.state
@@ -606,6 +630,12 @@ class MainWindow(QMainWindow):
         rows = [("Revenue", result.revenue, True)]
         rows += [(f"&nbsp;&nbsp;{name}", -value, False) for name, value in result.costs.items() if value]
         rows.append(("Operating profit", result.operating_profit, True))
+        # Funding and one-off board deals move cash without touching operating profit.
+        cash_moves = [("&nbsp;&nbsp;Funding round", result.funding_raised), ("&nbsp;&nbsp;Board decision (cash)", result.board_cash)]
+        cash_moves = [(name, value) for name, value in cash_moves if value]
+        if cash_moves:
+            rows += [(name, value, False) for name, value in cash_moves]
+            rows.append(("Change in cash", result.operating_profit + sum(value for _, value in cash_moves), True))
         cells = "".join(
             f"<tr><td style='padding:2px 18px 2px 0'>{'<b>' + name + '</b>' if bold else name}</td>"
             f"<td align='right' style='color:{'#A33B3B' if value < 0 else '#17283A'}'>{'<b>' + money(value) + '</b>' if bold else money(value)}</td></tr>"
@@ -613,13 +643,16 @@ class MainWindow(QMainWindow):
         )
         self.statement.setText(
             f"<p style='color:#697B8C'>Q{result.quarter} · {result.event.name}</p><table width='100%'>{cells}</table>"
-            f"<p style='color:#697B8C'>+{result.new_customers:,} new, -{result.churned_customers:,} churned customers"
+            f"<p style='color:#697B8C'>+{result.new_customers:,} new"
+            + (f", +{result.acquired_customers:,} acquired" if result.acquired_customers else "")
+            + f", -{result.churned_customers:,} churned customers"
             f" · support at {result.support_load:.0%} of capacity</p>"
         )
 
     def _update_dashboard(self) -> None:
         state = self.engine.state
         self.company_label.setText(f"{state.company_name}  ·  Scenario {self.engine.seed}")
+        self.company_label.setToolTip(state.company_name)
         self.quarter_label.setText(f"QUARTER {state.quarter} / {state.max_quarters}")
         self.score_label.setText(f"CEO SCORE  {state.score()}")
         self.cards["Cash"].set_value(money(state.cash), "Available liquidity")
@@ -628,7 +661,8 @@ class MainWindow(QMainWindow):
         self.cards["Valuation"].set_value(money(state.valuation), f"Founder stake {money(state.founder_stake)}")
         self.cards["Ownership"].set_value(f"{state.founder_ownership:.1f}%", f"{state.funding_rounds} funding round(s)")
         self.health_label.setText(
-            f"CURRENT COMPANY HEALTH\nProduct quality {state.product_quality:.0f}/100  ·  Employee morale {state.morale:.0f}/100  ·  "
+            f"CURRENT COMPANY HEALTH\nProduct quality {state.product_quality:.0f}/100  ·  Brand {state.brand:.0f}/100  ·  "
+            f"Employee morale {state.morale:.0f}/100  ·  "
             f"{state.employees} employees supporting up to {state.support_capacity:,.0f} customers  ·  "
             f"{state.customers / state.market_size:.0%} of addressable market"
         )
@@ -707,7 +741,7 @@ class MainWindow(QMainWindow):
         self._update_dashboard()
 
     def _save(self) -> None:
-        suggested = f"{self.engine.state.company_name.replace(' ', '-')}.startup-ceo.json"
+        suggested = f"{file_stem(self.engine.state.company_name)}.startup-ceo.json"
         path, _ = QFileDialog.getSaveFileName(self, "Save simulation", suggested, "Startup CEO saves (*.json)")
         if not path:
             return
@@ -742,6 +776,11 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(f"Simulation opened: {path}", 6000)
         if state.complete:
             self._show_report()
+
+    def resizeEvent(self, event: QResizeEvent) -> None:
+        # The arrow between the two canvas cards is decorative; drop it so narrow windows don't scroll sideways.
+        self.connector.setVisible(event.size().width() >= NARROW_WINDOW)
+        super().resizeEvent(event)
 
     def closeEvent(self, event: QCloseEvent) -> None:
         if self._confirm_discard():

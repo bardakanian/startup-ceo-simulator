@@ -59,6 +59,22 @@ class ReportServiceTests(unittest.TestCase):
         self.assertIn("added 4 through acquisitions", report.decisions[1])
         self.assertIn("+4", report_html(engine.state))
 
+    def test_pdf_export_refuses_read_only_file_and_appends_extension(self):
+        import stat
+        engine = SimulationEngine()
+        engine.advance(Decision(hires=0))
+        with TemporaryDirectory() as directory:
+            locked = Path(directory) / "locked.pdf"
+            locked.write_bytes(b"old report")
+            locked.chmod(stat.S_IRUSR)
+            with self.assertRaisesRegex(OSError, "read-only"):
+                export_pdf(locked, engine.state)
+            self.assertEqual(locked.read_bytes(), b"old report")
+            export_pdf(Path(directory) / "report.v2", engine.state)
+            self.assertTrue((Path(directory) / "report.v2.pdf").exists())
+            self.assertEqual((Path(directory) / "report.v2.pdf").stat().st_mode & 0o777, 0o644)
+            self.assertEqual(sorted(path.name for path in Path(directory).iterdir()), ["locked.pdf", "report.v2.pdf"])
+
 
 if __name__ == "__main__":
     unittest.main()

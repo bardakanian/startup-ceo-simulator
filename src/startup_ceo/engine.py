@@ -6,13 +6,14 @@ rules testable and makes the model useful in classroom discussion.
 
 from __future__ import annotations
 
+from dataclasses import replace
 import math
 import random
 
 from .dilemmas import dilemma_schedule
 from .formatting import money
 from .models import (
-    SUPPORT_PER_EMPLOYEE, Decision, DecisionRecord, DilemmaEffect, DilemmaOption, GameState,
+    MIN_EMPLOYEES, SUPPORT_PER_EMPLOYEE, Decision, DecisionRecord, DilemmaEffect, DilemmaOption, GameState,
     MarketEvent, QuarterResult, StrategicDilemma,
 )
 
@@ -33,7 +34,9 @@ SALARY = 27_000
 HIRING_COST = 8_000
 SEVERANCE = 18_000
 VARIABLE_COST_RATE = 0.19
-MIN_EMPLOYEES = 3
+PRICE_INCREASE_CHURN = 0.25
+CHURN_MULTIPLE_PENALTY = 10
+HEALTHY_CHURN = 0.03
 
 
 class SimulationEngine:
@@ -90,25 +93,9 @@ class SimulationEngine:
         _, option = self._chosen_option(decision)
         return option.effect if option else DilemmaEffect()
 
-    def preview_cost(self, decision: Decision) -> float:
-        """Quarterly cash costs before revenue-linked variable costs."""
-        effect = self._preview_effect(decision)
-        headcount = max(MIN_EMPLOYEES, self.headcount_after(decision))
-        return (
-            effect.expense
-            + FIXED_OVERHEAD
-            + headcount * SALARY
-            + decision.marketing
-            + decision.product
-            + decision.hires * HIRING_COST
-            + decision.layoffs * SEVERANCE
-        )
-
     def preview_net_burn(self, decision: Decision) -> float:
-        """Estimated quarterly cash burn assuming today's customers stay (negative means cash-generating)."""
-        effect = self._preview_effect(decision)
-        revenue = (self.state.customers + effect.customers) * decision.price * 3 * effect.revenue_multiplier
-        return self.preview_cost(decision) + revenue * (VARIABLE_COST_RATE + effect.variable_cost_delta) - revenue
+        """Projected quarterly operating cash burn (negative means the plan generates cash)."""
+        return -self._project(decision)[0].operating_profit
 
     def preview_runway_months(self, decision: Decision) -> float:
         burn = self.preview_net_burn(decision)
@@ -119,42 +106,36 @@ class SimulationEngine:
             cash += self.funding_offer()[0]
         return max(0.0, cash) / burn * 3
 
+    def _project(self, decision: Decision) -> tuple[QuarterResult, GameState]:
+        """Play the quarter on a throwaway copy of the state: same rules and announced market event,
+        but average demand instead of the quarter's random variation, so previews stay estimates."""
+        dilemma, option = self._chosen_option(decision)
+        state = replace(self.state, history=[], decision_history=[])
+        headcount = max(MIN_EMPLOYEES, self.headcount_after(decision))
+        return self._play_quarter(state, decision, dilemma, option, headcount, projection=True), state
+
     def preview_effects(self, decision: Decision) -> dict[str, str]:
-        """Give directional estimates; actual results still include the market event."""
+        """Give directional estimates; actual results still include the quarter's demand variation."""
         decision.validate()
         state = self.state
         effect = self._preview_effect(decision)
-        headcount = max(MIN_EMPLOYEES, self.headcount_after(decision))
-        customers = state.customers + effect.customers
-        saturation = max(0.1, 1 - customers / state.market_size)
-        price_pressure = (decision.price - 79) / 70
-        growth_signal = (
-            (decision.marketing / 250_000 + decision.product / 400_000 - price_pressure) * min(1.0, saturation / 0.6)
-            * effect.demand_multiplier - effect.churn_delta * 5
-        )
-        margin_signal = -self.preview_net_burn(decision)
-        quality_signal = (
-            1.8 * math.sqrt(decision.product / 50_000) + headcount / 40 - (state.product_quality / 25 - 1) + effect.quality
-        )
+        projected, after = self._project(decision)
+        growth = (projected.customers - state.customers) / max(1, state.customers)
+        quality_change = after.product_quality - state.product_quality
         runway_months = self.preview_runway_months(decision)
-        support_load = customers * 1.15 / (headcount * SUPPORT_PER_EMPLOYEE)
-
-        def level(value: float, low: float, high: float) -> str:
-            return "Low" if value < low else "High" if value > high else "Moderate"
 
         return {
-            "Customer growth": level(growth_signal, 0.35, 0.85),
-            "Operating margin": "Improving" if margin_signal > 0 else "Under pressure",
-            "Product quality": "Improving" if quality_signal > 0.5 else "Declining" if quality_signal < -0.5 else "Stable",
-            "Service capacity": "Under pressure" if support_load > 1 else "Stretched" if support_load > 0.85 else "Stable",
+            "Customer growth": "Low" if growth < 0.03 else "High" if growth > 0.10 else "Moderate",
+            "Operating margin": "Improving" if projected.operating_profit > 0 else "Under pressure",
+            "Product quality": "Improving" if quality_change > 0.5 else "Declining" if quality_change < -0.5 else "Stable",
+            "Service capacity": "Under pressure" if projected.support_load > 1 else "Stretched" if projected.support_load > 0.85 else "Stable",
             "Runway resilience": "High" if runway_months >= 12 else "Moderate" if runway_months >= 6 else "Under pressure",
             "Founder control": "Under pressure" if decision.raise_funding or effect.dilution else "Stable",
         }
 
     def advance(self, decision: Decision) -> QuarterResult:
         decision.validate()
-        state = self.state
-        if state.complete:
+        if self.state.complete:
             raise RuntimeError("The simulation has already ended.")
         dilemma, option = self._chosen_option(decision)
         if dilemma is not None and option is None:
@@ -164,8 +145,13 @@ class SimulationEngine:
         headcount = self.headcount_after(decision)
         if headcount < MIN_EMPLOYEES:
             raise ValueError(f"At least {MIN_EMPLOYEES} employees must remain to run the company.")
-        effect = option.effect if option else DilemmaEffect()
+        return self._play_quarter(self.state, decision, dilemma, option, headcount)
 
+    def _play_quarter(
+        self, state: GameState, decision: Decision, dilemma: StrategicDilemma | None,
+        option: DilemmaOption | None, headcount: int, projection: bool = False,
+    ) -> QuarterResult:
+        effect = option.effect if option else DilemmaEffect()
         opening_customers = state.customers
         # Board decisions take effect at the start of the quarter.
         state.customers += effect.customers
@@ -178,6 +164,9 @@ class SimulationEngine:
         state.quarter += 1
         rng = random.Random(self.seed + state.quarter * 7919)
         event = EVENTS[rng.randrange(len(EVENTS))]
+        competitive_noise = rng.uniform(0.94, 1.06)
+        if projection:
+            competitive_noise = 1.0
 
         support_capacity = headcount * SUPPORT_PER_EMPLOYEE
         state.market_size *= 1 + BASE_MARKET_GROWTH + event.market_growth
@@ -186,7 +175,6 @@ class SimulationEngine:
         price_factor = math.pow(79 / decision.price, 1.6 - state.product_quality / 100)
         marketing_leads = math.sqrt(decision.marketing + 1) * 3.2
         conversion = 0.24 + state.product_quality / 500 + state.brand / 800
-        competitive_noise = rng.uniform(0.94, 1.06)
         potential_new = (
             marketing_leads * conversion * price_factor * saturation
             * event.demand_multiplier * effect.demand_multiplier * competitive_noise
@@ -199,6 +187,8 @@ class SimulationEngine:
         churn_rate = 0.115 - state.product_quality / 1200 - state.morale / 2500 + overload * 0.15 + effect.churn_delta
         if decision.price > 99:
             churn_rate += (decision.price - 99) / 900 * (1.5 - state.product_quality / 100)
+        # Raising the price on existing customers pushes some of them to leave.
+        churn_rate += max(0.0, decision.price / state.current_price - 1) * PRICE_INCREASE_CHURN
         churned = min(old_customers, max(0, round(old_customers * max(0.025, churn_rate))))
         state.customers = max(0, old_customers + new_customers - churned)
 
@@ -217,6 +207,7 @@ class SimulationEngine:
         operating_profit = revenue - sum(costs.values())
         gross_profit = revenue - costs["Variable costs"]
 
+        funding = 0.0
         if decision.raise_funding:
             funding, dilution = self.funding_offer()
             state.cash += funding
@@ -233,10 +224,16 @@ class SimulationEngine:
         morale_change += min(2.0, decision.product / 100_000) - decision.layoffs * 5 - decision.hires * 0.3 - overload * 10
         state.morale = min(100, max(10, state.morale + morale_change))
         state.last_growth = (state.customers - opening_customers) / max(1, opening_customers)
+        # Investors value organic momentum: acquired customers add revenue but are not growth.
+        organic_growth = (state.customers - old_customers) / max(1, old_customers)
+        quarterly_churn = churned / max(1, old_customers)
 
         annualized_revenue = revenue * 4
         margin = operating_profit / revenue if revenue else -1
-        multiple = max(1.2, min(7.0, 3.2 + state.last_growth * 8 + margin * 1.5 + state.product_quality / 100))
+        multiple = max(1.2, min(7.0,
+            3.2 + organic_growth * 8 + margin * 1.5 + state.product_quality / 100
+            - max(0.0, quarterly_churn - HEALTHY_CHURN) * CHURN_MULTIPLE_PENALTY
+        ))
         state.valuation = max(500_000, annualized_revenue * multiple + max(0, state.cash) * 0.6)
         state.revenue = revenue
         state.operating_profit = operating_profit
@@ -272,6 +269,9 @@ class SimulationEngine:
             narrative=narrative,
             costs=costs,
             support_load=support_load,
+            acquired_customers=effect.customers,
+            funding_raised=funding,
+            board_cash=effect.cash,
         )
         state.history.append(result)
         state.decision_history.append(

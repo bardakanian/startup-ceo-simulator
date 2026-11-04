@@ -3,9 +3,10 @@ import unittest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QApplication
 
-from startup_ceo.app import MainWindow, WelcomeDialog
+from startup_ceo.app import MainWindow, WelcomeDialog, file_stem
 
 
 class GuiSmokeTests(unittest.TestCase):
@@ -122,6 +123,87 @@ class GuiSmokeTests(unittest.TestCase):
         self.assertFalse(cash_button.isEnabled())
         self.assertFalse(cash_button.isChecked())
         self.assertFalse(window.advance_button.isEnabled())
+        window.close()
+
+    def test_health_shows_brand_and_statement_shows_acquisitions(self):
+        from startup_ceo.dilemmas import DILEMMAS
+        window = MainWindow()
+        self.assertIn("Brand 40/100", window.health_label.text())
+        acquihire = next(item for item in DILEMMAS if item.key == "acquihire")
+        window.engine.upcoming_dilemma = lambda: acquihire
+        window.shown_dilemma = None
+        window._update_dashboard()
+        window.dilemma_cards[1].button.setChecked(True)
+        window.engine.upcoming_dilemma = lambda: acquihire if window.engine.state.quarter == 0 else None
+        window._advance()
+        self.assertIn("+300 acquired", window.statement.text())
+        window.unsaved = False
+        window.close()
+
+    def test_short_runway_warns_even_when_raising(self):
+        window = MainWindow()
+        window.engine.state.cash = -200_000
+        window.engine.state.valuation = 500_000
+        window.funding.setChecked(True)
+        window._update_dashboard()
+        self.assertFalse(window.alert.isHidden())
+        self.assertIn("Even with the funding round", window.alert.text())
+        window.close()
+
+    def test_finished_game_clears_forward_looking_estimates(self):
+        window = MainWindow()
+        window._show_report = lambda: None
+        for _ in range(12):
+            if window.dilemma_group.buttons():
+                window.dilemma_group.buttons()[0].setChecked(True)
+            window._advance()
+        self.assertEqual(window.cards["Runway"].value.text(), "—")
+        self.assertTrue(all(row.value.text() == "—" for row in window.effects.values()))
+        self.assertIn("complete", window.funding_note.text())
+        self.assertTrue(window.alert.isHidden())
+        window.unsaved = False
+        window.close()
+
+    def test_statement_explains_cash_from_funding_and_board_deals(self):
+        from startup_ceo.dilemmas import DILEMMAS
+        window = MainWindow()
+        grant = next(item for item in DILEMMAS if item.key == "research_grant")
+        window.engine.upcoming_dilemma = lambda: grant if window.engine.state.quarter == 0 else None
+        window.shown_dilemma = None
+        window._update_dashboard()
+        window.dilemma_cards[0].button.setChecked(True)
+        window.funding.setChecked(True)
+        start = window.engine.state.cash
+        window._advance()
+        text = window.statement.text()
+        self.assertIn("Funding round", text)
+        self.assertIn("Board decision (cash)", text)
+        from startup_ceo.formatting import money
+        self.assertIn(money(window.engine.state.cash - start), text)
+        window.unsaved = False
+        window.close()
+
+    def test_minimum_window_fits_without_sideways_scrolling(self):
+        window = MainWindow()
+        window.resize(1080, 760)
+        window.show()
+        for _ in range(3):
+            self.app.processEvents()
+        scroll = window.centralWidget().layout().itemAt(1).widget()
+        self.assertFalse(scroll.horizontalScrollBar().isVisible())
+        self.assertGreater(window.price.slider.width(), 100)
+        window.resize(1440, 900)
+        self.app.processEvents()
+        self.assertTrue(window.connector.isVisible())
+        window.close()
+
+    def test_company_name_is_shown_literally_and_made_file_safe(self):
+        window = MainWindow()
+        window.engine.reset("<b>Acme</b>/Beta: Labs", 2027)
+        window._update_dashboard()
+        self.assertEqual(window.company_label.textFormat(), Qt.TextFormat.PlainText)
+        self.assertEqual(file_stem("<b>Acme</b>/Beta: Labs"), "b-Acme-b-Beta-Labs")
+        self.assertEqual(file_stem("///"), "simulation")
         window.close()
 
     def test_welcome_dialog_offers_scenario_code(self):

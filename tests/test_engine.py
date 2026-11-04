@@ -6,10 +6,10 @@ from startup_ceo.engine import Decision, SimulationEngine
 from startup_ceo.formatting import money
 
 
-def respond(engine, decision):
-    """Answer any pending board dilemma with its first option."""
+def respond(engine, decision, option=0):
+    """Answer any pending board dilemma (the first option by default; -1 is always the status quo)."""
     dilemma = engine.upcoming_dilemma()
-    return replace(decision, dilemma_choice=dilemma.options[0].key) if dilemma else decision
+    return replace(decision, dilemma_choice=dilemma.options[option].key) if dilemma else decision
 
 
 def dilemma(key):
@@ -286,6 +286,110 @@ class SimulationEngineTests(unittest.TestCase):
 
     def test_dilemma_schedule_is_cached(self):
         self.assertIs(dilemma_schedule(31), dilemma_schedule(31))
+
+    def test_projection_matches_the_engine_except_for_demand_variation(self):
+        for seed in range(1, 40):
+            engine = SimulationEngine(seed=seed)
+            engine.state.customers = 2_500
+            decision = Decision(price=99, marketing=150_000, product=60_000, hires=1)
+            projected_burn = engine.preview_net_burn(decision)
+            result = engine.advance(decision)
+            # Only the +/-6% demand variation separates the estimate from the result.
+            self.assertAlmostEqual(-projected_burn, result.operating_profit, delta=result.revenue * 0.02)
+
+    def test_preview_uses_announced_market_event(self):
+        seeds = {SimulationEngine(seed=seed).upcoming_event().name: seed for seed in range(1, 200)}
+        slowdown = SimulationEngine(seed=seeds["Economic slowdown"])
+        boom = SimulationEngine(seed=seeds["Enterprise spotlight"])
+        decision = Decision(marketing=150_000, hires=0)
+        self.assertLess(slowdown._project(decision)[0].new_customers, boom._project(decision)[0].new_customers)
+
+    def test_preview_leaves_state_untouched(self):
+        engine = SimulationEngine(seed=21)
+        engine.advance(Decision())
+        before = (engine.state.cash, engine.state.customers, engine.state.market_size, engine.state.product_quality,
+                  len(engine.state.history), engine.state.quarter)
+        engine.preview_effects(Decision(price=129, marketing=250_000, hires=3, raise_funding=True))
+        engine.preview_runway_months(Decision(raise_funding=True))
+        after = (engine.state.cash, engine.state.customers, engine.state.market_size, engine.state.product_quality,
+                 len(engine.state.history), engine.state.quarter)
+        self.assertEqual(before, after)
+
+    def test_growth_estimate_matches_actual_growth_band(self):
+        import random
+        rnd = random.Random(3)
+        hits = total = 0
+        for _ in range(300):
+            engine = SimulationEngine(seed=rnd.randrange(1, 10**6))
+            engine.state.customers = rnd.randrange(500, 9_000)
+            engine.state.employees = rnd.randrange(3, 30)
+            decision = Decision(rnd.randrange(39, 150), rnd.randrange(0, 251) * 1000, rnd.randrange(0, 201) * 1000, 0)
+            label = engine.preview_effects(decision)["Customer growth"]
+            opening = engine.state.customers
+            engine.advance(decision)
+            growth = (engine.state.customers - opening) / opening
+            actual = "Low" if growth < 0.03 else "High" if growth > 0.10 else "Moderate"
+            hits += label == actual
+            total += 1
+        self.assertGreater(hits / total, 0.95)
+
+    def test_acquired_customers_are_reported_separately(self):
+        engine = SimulationEngine(seed=3)
+        engine.upcoming_dilemma = lambda: dilemma("acquihire")
+        result = engine.advance(Decision(hires=0, dilemma_choice="stock"))
+        self.assertEqual(result.acquired_customers, 300)
+        self.assertEqual(800 + result.growth, engine.state.customers)
+
+    def _play_to_final_quarter(self, seed):
+        engine = SimulationEngine(seed=seed)
+        for _ in range(11):
+            decision = respond(engine, Decision(price=99, marketing=150_000, product=60_000, hires=1), -1)
+            decision.raise_funding = engine.preview_runway_months(decision) < 6 and not engine.state.funding_rounds
+            engine.advance(decision)
+        self.assertFalse(engine.state.complete)
+        return engine
+
+    def test_final_quarter_price_hike_does_not_pay(self):
+        from copy import deepcopy
+        gains = []
+        for seed in range(30, 40):
+            steady = self._play_to_final_quarter(seed)
+            hiked = deepcopy(steady)
+            steady.advance(respond(steady, Decision(price=99, marketing=150_000, product=60_000, hires=1), -1))
+            hiked.advance(respond(hiked, Decision(price=149, marketing=150_000, product=60_000, hires=1), -1))
+            gains.append(hiked.state.score() - steady.state.score())
+        self.assertLess(sum(gains) / len(gains), 0)
+
+    def test_price_increase_drives_existing_customers_away(self):
+        held = SimulationEngine(seed=2)
+        raised = SimulationEngine(seed=2)
+        for engine in (held, raised):
+            engine.state.current_price = 99
+            engine.state.product_quality = 70
+        held_result = held.advance(Decision(price=99, hires=0))
+        raised_result = raised.advance(Decision(price=119, hires=0))
+        self.assertGreater(raised_result.churned_customers, held_result.churned_customers * 1.5)
+
+    def test_acquired_customers_do_not_count_as_organic_growth_in_valuation(self):
+        from copy import deepcopy
+        engine = self._play_to_final_quarter(41)
+        bought = deepcopy(engine)
+        passed = deepcopy(engine)
+        for copy_, choice in ((bought, "stock"), (passed, "pass")):
+            copy_.upcoming_dilemma = lambda: dilemma("acquihire")
+            copy_.advance(Decision(price=99, marketing=150_000, product=60_000, hires=1, dilemma_choice=choice))
+        revenue_gain = bought.state.revenue / passed.state.revenue - 1
+        valuation_gain = bought.state.valuation / passed.state.valuation - 1
+        self.assertLess(valuation_gain, revenue_gain + 0.03)
+
+    def test_results_record_non_operating_cash(self):
+        engine = SimulationEngine()
+        engine.upcoming_dilemma = lambda: dilemma("research_grant")
+        raised, _ = engine.funding_offer()
+        start = engine.state.cash
+        result = engine.advance(Decision(hires=0, raise_funding=True, dilemma_choice="apply"))
+        self.assertEqual((result.funding_raised, result.board_cash), (raised, 250_000))
+        self.assertAlmostEqual(engine.state.cash - start, result.operating_profit + raised + 250_000)
 
 
 if __name__ == "__main__":

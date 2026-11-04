@@ -4,7 +4,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from html import escape
+import os
 from pathlib import Path
+import tempfile
 
 from PySide6.QtCore import QMarginsF
 from PySide6.QtGui import QGuiApplication, QPageLayout, QPageSize, QPdfWriter, QTextDocument
@@ -118,8 +120,13 @@ def export_pdf(path: str | Path, state: GameState) -> None:
     application = QGuiApplication.instance() or QGuiApplication([])
     destination = Path(path)
     if destination.suffix.lower() != ".pdf":
-        destination = destination.with_suffix(".pdf")
-    writer = QPdfWriter(str(destination))
+        destination = Path(f"{destination}.pdf")
+    if destination.exists() and not os.access(destination, os.W_OK):
+        raise OSError(f"{destination.name} is read-only, so it can't be replaced.")
+    # Write to a temporary file first so a failed export can't leave an old or partial report looking new.
+    handle, temporary = tempfile.mkstemp(suffix=".pdf", dir=destination.parent)
+    os.close(handle)
+    writer = QPdfWriter(temporary)
     writer.setTitle(f"{state.company_name} Final Board Report")
     writer.setCreator("Startup CEO Simulator")
     writer.setPageSize(QPageSize(QPageSize.PageSizeId.Letter))
@@ -127,6 +134,11 @@ def export_pdf(path: str | Path, state: GameState) -> None:
     document = QTextDocument()
     document.setHtml(report_html(state))
     document.print_(writer)
+    del writer
     application.processEvents()
-    if not destination.exists() or destination.stat().st_size < 1_000:
+    if os.path.getsize(temporary) < 1_000:
+        os.remove(temporary)
         raise OSError("The PDF report could not be created.")
+    # mkstemp makes owner-only files; keep the permissions an ordinary export (or the replaced file) would have.
+    os.chmod(temporary, destination.stat().st_mode & 0o777 if destination.exists() else 0o644)
+    os.replace(temporary, destination)

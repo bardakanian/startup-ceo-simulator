@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 
 STARTING_CUSTOMERS = 800
 SUPPORT_PER_EMPLOYEE = 300
+MIN_EMPLOYEES = 3
 
 
 @dataclass(slots=True, frozen=True)
@@ -94,10 +95,13 @@ class QuarterResult:
     narrative: str
     costs: dict[str, float] = field(default_factory=dict)
     support_load: float = 0.0
+    acquired_customers: int = 0
+    funding_raised: float = 0.0
+    board_cash: float = 0.0
 
     @property
     def growth(self) -> int:
-        return self.new_customers - self.churned_customers
+        return self.new_customers + self.acquired_customers - self.churned_customers
 
 
 @dataclass(slots=True)
