@@ -8,8 +8,6 @@ The experience is deliberately approachable: decisions are connected to visible 
 
 [![47-second demo: planning a quarter, a board dilemma, a funding round, and the final board report](docs/media/startup-ceo-demo.gif)](docs/media/startup-ceo-demo.mp4?raw=true)
 
-*47-second walkthrough. Click the preview for the full-quality MP4.*
-
 ![Startup CEO Simulator strategy canvas](docs/screenshots/strategy-canvas.png)
 
 ## Why I built this project
