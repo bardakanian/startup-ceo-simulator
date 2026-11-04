@@ -4,6 +4,12 @@ Startup CEO Simulator is an offline strategic-management game built for MBA pres
 
 The experience is deliberately approachable: decisions are connected to visible business effects through a transparent rules engine, making the application useful as an interactive case study for professors, recruiters, and potential employers.
 
+## Demo
+
+[![47-second demo: planning a quarter, a board dilemma, a funding round, and the final board report](docs/media/startup-ceo-demo.gif)](docs/media/startup-ceo-demo.mp4?raw=true)
+
+*47-second walkthrough. Click the preview for the full-quality MP4.*
+
 ![Startup CEO Simulator strategy canvas](docs/screenshots/strategy-canvas.png)
 
 ## Why I built this project
@@ -115,7 +121,7 @@ Render a captioned 1080×1080 demo video of a scripted playthrough (requires `ff
 QT_QPA_PLATFORM=offscreen python scripts/make_demo_video.py
 ```
 
-The video is written to `work/startup-ceo-demo-linkedin.mp4`.
+The video is written to `work/startup-ceo-demo-linkedin.mp4`. The copy shown at the top of this README lives in `docs/media/`, with a GIF preview made from it.
 
 ## Project structure
 
